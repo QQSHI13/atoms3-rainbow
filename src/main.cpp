@@ -1,14 +1,19 @@
 /**
- * AtomS3 Lite RGB Rainbow Demo
+ * AtomS3 Lite RGB Rainbow Demo - Fixed Version
  * 
  * Features:
  * - 4 LED modes: Rainbow cycle, Breathing, Random blink, Button control
- * - Click button to switch modes
+ * - Click button to switch modes (long press)
  * - Serial output for debugging
  * 
  * Hardware: M5Stack AtomS3 Lite
  * - RGB LED: GPIO 35
  * - Button: GPIO 41
+ * 
+ * Fixed:
+ * - Mode now properly cycles through all 4 modes
+ * - Breathing effect is smooth (full cycle)
+ * - Button control doesn't conflict with mode switching
  */
 
 #include <Arduino.h>
@@ -27,7 +32,7 @@ enum Mode {
     RAINBOW_CYCLE,    // Smooth rainbow color cycling
     BREATH,           // Breathing effect with current color
     RANDOM_BLINK,     // Random color changes
-    BUTTON_CONTROL    // Manual color selection with button
+    BUTTON_CONTROL    // Manual color selection
 };
 
 // Global variables
@@ -36,12 +41,16 @@ uint8_t hue = 0;              // Current hue for rainbow
 uint8_t brightness = 128;     // Default brightness
 unsigned long lastUpdate = 0;
 
+// Button control color index
+uint8_t buttonColorIndex = 0;
+
 void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n========================================");
     Serial.println("  AtomS3 Lite RGB Rainbow Demo");
+    Serial.println("  FIXED VERSION");
     Serial.println("========================================");
     
     // Initialize FastLED
@@ -59,8 +68,9 @@ void setup() {
     FastLED.show();
     delay(100);
     
-    Serial.println("Started! Click button to change modes.");
-    Serial.println("Modes: Rainbow → Breath → Random → Manual");
+    Serial.println("Started!");
+    Serial.println("Long press button (>500ms) to change mode");
+    Serial.println("Short press in Button Control mode to change color");
 }
 
 /**
@@ -68,38 +78,27 @@ void setup() {
  * Smoothly cycles through all colors
  */
 void rainbowCycle() {
-    if (millis() - lastUpdate > 20) {  // Update every 20ms
-        hue++;  // Increment hue
-        leds[0] = CHSV(hue, 255, 255);  // Full saturation and brightness
+    if (millis() - lastUpdate > 20) {
+        hue++;
+        leds[0] = CHSV(hue, 255, 255);
         FastLED.show();
         lastUpdate = millis();
     }
 }
 
 /**
- * Mode 2: Breathing Effect
- * Current color fades in and out
+ * Mode 2: Breathing Effect - FIXED
+ * Smooth sine wave breathing
  */
 void breathingEffect() {
-    static uint8_t breatheBrightness = 0;
-    static int8_t direction = 1;
+    // Use sine wave for smooth breathing
+    // millis() / 1000.0 gives seconds, * 2 for speed
+    float seconds = millis() / 1000.0 * 2;
+    // sin() returns -1 to 1, map to 0 to 255
+    int breatheBrightness = (sin(seconds) + 1.0) * 127.5;
     
-    if (millis() - lastUpdate > 10) {  // Smooth update
-        breatheBrightness += direction * 2;  // Step size
-        
-        // Bounce at boundaries
-        if (breatheBrightness >= 255) {
-            breatheBrightness = 255;
-            direction = -1;
-        } else if (breatheBrightness <= 0) {
-            breatheBrightness = 0;
-            direction = 1;
-        }
-        
-        leds[0] = CHSV(hue, 255, breatheBrightness);
-        FastLED.show();
-        lastUpdate = millis();
-    }
+    leds[0] = CHSV(hue, 255, breatheBrightness);
+    FastLED.show();
 }
 
 /**
@@ -115,15 +114,10 @@ void randomBlink() {
 }
 
 /**
- * Mode 4: Button Control
- * Each click changes to next preset color
+ * Mode 4: Button Control - FIXED
+ * Display current selected color
  */
 void buttonControl() {
-    static uint8_t colorIndex = 0;
-    static bool lastButtonState = HIGH;
-    bool currentButtonState = digitalRead(BUTTON_PIN);
-    
-    // Detect button press (falling edge)
     CRGB colors[] = {
         CRGB::Red,
         CRGB::Green, 
@@ -134,48 +128,44 @@ void buttonControl() {
         CRGB::Orange,
         CRGB::White
     };
-    const uint8_t numColors = sizeof(colors) / sizeof(colors[0]);
+    const uint8_t numColors = 8;
     
-    if (lastButtonState == HIGH && currentButtonState == LOW) {
-        delay(50);  // Debounce
-        if (digitalRead(BUTTON_PIN) == LOW) {
-            colorIndex = (colorIndex + 1) % numColors;
-            leds[0] = colors[colorIndex];
-            FastLED.show();
-            
-            // Print color name
-            const char* colorNames[] = {"Red", "Green", "Blue", "Yellow", 
-                                       "Purple", "Cyan", "Orange", "White"};
-            Serial.print("Color: ");
-            Serial.println(colorNames[colorIndex]);
-            
-            // Wait for release
-            while (digitalRead(BUTTON_PIN) == LOW) delay(10);
-        }
-    }
-    lastButtonState = currentButtonState;
+    // Keep showing the selected color
+    leds[0] = colors[buttonColorIndex % numColors];
+    FastLED.show();
 }
 
 /**
- * Check for mode change button press
- * Long press (>500ms) changes mode
+ * Unified button handling - FIXED
+ * Distinguishes between short press (color change) and long press (mode change)
  */
-void checkModeButton() {
-    static unsigned long buttonPressTime = 0;
-    static bool buttonPressed = false;
+void handleButton() {
+    static unsigned long pressStartTime = 0;
+    static bool wasPressed = false;
+    static bool longPressHandled = false;
     
-    if (digitalRead(BUTTON_PIN) == LOW) {
-        if (!buttonPressed) {
-            buttonPressed = true;
-            buttonPressTime = millis();
-        } else if (millis() - buttonPressTime > 500) {
-            // Long press detected - change mode
+    bool isPressed = (digitalRead(BUTTON_PIN) == LOW);
+    
+    // Button just pressed
+    if (isPressed && !wasPressed) {
+        pressStartTime = millis();
+        wasPressed = true;
+        longPressHandled = false;
+    }
+    
+    // Button being held - check for long press
+    if (isPressed && wasPressed && !longPressHandled) {
+        if (millis() - pressStartTime >= 500) {
+            // LONG PRESS - Change mode
+            longPressHandled = true;
+            
+            // Cycle through modes
             currentMode = (Mode)((currentMode + 1) % 4);
             
             // Print mode name
             const char* modeNames[] = {"Rainbow Cycle", "Breathing", 
                                       "Random Blink", "Button Control"};
-            Serial.print("Mode: ");
+            Serial.print("Mode changed to: ");
             Serial.println(modeNames[currentMode]);
             
             // Visual feedback - flash white
@@ -183,22 +173,34 @@ void checkModeButton() {
             FastLED.show();
             delay(100);
             
-            // Reset for new mode
+            // Reset state for new mode
             hue = random8();
             lastUpdate = 0;
-            
-            // Wait for button release
-            while (digitalRead(BUTTON_PIN) == LOW) delay(10);
-            buttonPressed = false;
         }
-    } else {
-        buttonPressed = false;
+    }
+    
+    // Button just released
+    if (!isPressed && wasPressed) {
+        unsigned long pressDuration = millis() - pressStartTime;
+        
+        // SHORT PRESS - Only in Button Control mode, change color
+        if (pressDuration < 500 && !longPressHandled && currentMode == BUTTON_CONTROL) {
+            buttonColorIndex++;
+            
+            const char* colorNames[] = {"Red", "Green", "Blue", "Yellow",
+                                       "Purple", "Cyan", "Orange", "White"};
+            Serial.print("Color: ");
+            Serial.println(colorNames[buttonColorIndex % 8]);
+        }
+        
+        wasPressed = false;
+        longPressHandled = false;
     }
 }
 
 void loop() {
-    // Check for mode change (long press)
-    checkModeButton();
+    // Handle button (both short and long press)
+    handleButton();
     
     // Run current mode
     switch(currentMode) {
