@@ -53,6 +53,9 @@ void setup() {
     Serial.println("  FIXED VERSION");
     Serial.println("========================================");
     
+    // Initialize random seed using analog noise
+    randomSeed(analogRead(0));
+    
     // Initialize FastLED
     FastLED.addLeds<SK6812, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setBrightness(brightness);
@@ -136,15 +139,26 @@ void buttonControl() {
 }
 
 /**
- * Unified button handling - FIXED
+ * Unified button handling - FIXED with debouncing
  * Distinguishes between short press (color change) and long press (mode change)
  */
 void handleButton() {
     static unsigned long pressStartTime = 0;
+    static unsigned long lastDebounceTime = 0;
     static bool wasPressed = false;
     static bool longPressHandled = false;
+    const unsigned long DEBOUNCE_DELAY = 50;  // 50ms debounce
     
     bool isPressed = (digitalRead(BUTTON_PIN) == LOW);
+    
+    // Debounce: ignore state changes within DEBOUNCE_DELAY
+    if (isPressed != wasPressed) {
+        lastDebounceTime = millis();
+    }
+    
+    if ((millis() - lastDebounceTime) < DEBOUNCE_DELAY) {
+        return;  // Wait for debounce period
+    }
     
     // Button just pressed
     if (isPressed && !wasPressed) {
